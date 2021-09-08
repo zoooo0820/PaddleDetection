@@ -23,6 +23,11 @@ try:
 except Exception:
     from collections import Sequence
 
+try:
+    import albumentations
+except ImportError:
+    albumentations = None
+
 import cv2
 import numpy as np
 import math
@@ -39,7 +44,7 @@ __all__ = [
     'RandomAffine', 'KeyPointFlip', 'TagGenerate', 'ToHeatmaps',
     'NormalizePermute', 'EvalAffine', 'RandomFlipHalfBodyTransform',
     'TopDownAffine', 'ToHeatmapsTopDown', 'ToHeatmapsTopDown_DARK',
-    'TopDownEvalAffine'
+    'TopDownEvalAffine', 'AlbumentationsCoarseDropout'
 ]
 
 
@@ -528,6 +533,24 @@ class RandomFlipHalfBodyTransform(object):
         records['scale'] = s
         records['rotate'] = r
 
+        return records
+
+
+@register_keypointop
+class AlbumentationsCoarseDropout(object):
+    def __init__(self, max_holes, max_height, max_width, min_holes, min_height,
+                 min_width, p):
+        if albumentations is None:
+            raise RuntimeError('albumentations is not installed')
+        self.transform = albumentations.Compose([
+            albumentations.CoarseDropout(max_holes, max_height, max_width,
+                                         min_holes, min_height, min_width, p)
+        ])
+
+    def __call__(self, records):
+        img = records['image']
+        transformed = self.transform(image=img)
+        records['image'] = transformed["image"]
         return records
 
 
