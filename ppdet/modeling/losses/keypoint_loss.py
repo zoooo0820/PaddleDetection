@@ -23,7 +23,7 @@ import paddle.nn as nn
 
 from ppdet.core.workspace import register, serializable
 
-__all__ = ['HrHRNetLoss', 'KeyPointMSELoss']
+__all__ = ['HrHRNetLoss', 'KeyPointMSELoss', 'KeyPointMSEOHKMLoss']
 
 
 @register
@@ -63,6 +63,61 @@ class KeyPointMSELoss(nn.Layer):
                                                          heatmap_gt)
         keypoint_losses = dict()
         keypoint_losses['loss'] = loss / num_joints
+        return keypoint_losses
+
+
+@register
+@serializable
+class KeyPointMSEOHKMLoss(nn.Layer):
+    def __init__(self, use_target_weight=True, topk=8, loss_scale=0.5):
+        """
+        KeyPointMSELoss layer
+
+        Args:
+            use_target_weight (bool): whether to use target weight
+        """
+        super(KeyPointMSEOHKMLoss, self).__init__()
+        self.topk = topk
+        self.criterion = nn.MSELoss(reduction='none')
+        self.use_target_weight = use_target_weight
+        self.loss_scale = loss_scale
+
+    def online_hard_keypoint_mining(self, losses):
+        ohkm_loss = 0.
+        for i in range(len(losses)):
+            sub_loss = losses[i]
+            _, topk_idx = paddle.topk(
+                sub_loss, k=self.topk, axis=0, sorted=False)
+            tmp_loss = paddle.gather(sub_loss, topk_idx, axis=0)
+            ohkm_loss += paddle.sum(tmp_loss) / self.topk
+        ohkm_loss /= len(losses)
+        return ohkm_loss
+
+    def forward(self, output, records):
+        target = records['target']
+        target_weight = records['target_weight']
+        batch_size = output.shape[0]
+        num_joints = output.shape[1]
+        heatmaps_pred = output.reshape(
+            (batch_size, num_joints, -1)).split(num_joints, 1)
+        heatmaps_gt = target.reshape(
+            (batch_size, num_joints, -1)).split(num_joints, 1)
+        losses = []
+        for idx in range(num_joints):
+            heatmap_pred = heatmaps_pred[idx].squeeze()
+            heatmap_gt = heatmaps_gt[idx].squeeze()
+            if self.use_target_weight:
+                losses.append(self.loss_scale * self.criterion(
+                    heatmap_pred.multiply(target_weight[:, idx]),
+                    heatmap_gt.multiply(target_weight[:, idx])))
+            else:
+                losses.append(self.loss_scale * self.criterion(heatmap_pred,
+                                                               heatmap_gt))
+        losses = [loss.mean(axis=1).unsqueeze(axis=1) for loss in losses]
+        losses = paddle.concat(losses, axis=1)
+        ohkm_loss = self.online_hard_keypoint_mining(losses)
+        keypoint_losses = dict()
+        keypoint_losses['loss'] = ohkm_loss
         return keypoint_losses
 
 
