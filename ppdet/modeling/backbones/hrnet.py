@@ -25,7 +25,7 @@ import math
 from ppdet.core.workspace import register
 from ..shape_spec import ShapeSpec
 
-__all__ = ['HRNet']
+__all__ = ['HRNet', 'HRNet_smallV2']
 
 
 class ConvNormLayer(nn.Layer):
@@ -92,6 +92,7 @@ class ConvNormLayer(nn.Layer):
 class Layer1(nn.Layer):
     def __init__(self,
                  num_channels,
+                 num_blocks,
                  has_se=False,
                  norm_decay=0.,
                  freeze_norm=True,
@@ -100,7 +101,7 @@ class Layer1(nn.Layer):
 
         self.bottleneck_block_list = []
 
-        for i in range(4):
+        for i in range(num_blocks):
             bottleneck_block = self.add_sublayer(
                 "block_{}_{}".format(name, i + 1),
                 BottleneckBlock(
@@ -392,6 +393,7 @@ class Stage(nn.Layer):
     def __init__(self,
                  num_channels,
                  num_modules,
+                 num_blocks,
                  num_filters,
                  has_se=False,
                  norm_decay=0.,
@@ -408,6 +410,7 @@ class Stage(nn.Layer):
                     "stage_{}_{}".format(name, i + 1),
                     HighResolutionModule(
                         num_channels=num_channels,
+                        num_blocks=num_blocks,
                         num_filters=num_filters,
                         has_se=has_se,
                         norm_decay=norm_decay,
@@ -419,6 +422,7 @@ class Stage(nn.Layer):
                     "stage_{}_{}".format(name, i + 1),
                     HighResolutionModule(
                         num_channels=num_channels,
+                        num_blocks=num_blocks,
                         num_filters=num_filters,
                         has_se=has_se,
                         norm_decay=norm_decay,
@@ -437,6 +441,7 @@ class Stage(nn.Layer):
 class HighResolutionModule(nn.Layer):
     def __init__(self,
                  num_channels,
+                 num_blocks,
                  num_filters,
                  has_se=False,
                  multi_scale_output=True,
@@ -445,7 +450,7 @@ class HighResolutionModule(nn.Layer):
                  name=None):
         super(HighResolutionModule, self).__init__()
         self.branches_func = Branches(
-            block_num=4,
+            block_num=num_blocks,
             in_channels=num_channels,
             out_channels=num_filters,
             has_se=has_se,
@@ -602,6 +607,7 @@ class HRNet(nn.Layer):
 
         channels_2, channels_3, channels_4 = self.channels[width]
         num_modules_2, num_modules_3, num_modules_4 = 1, 4, 3
+        num_blocks_2, num_blocks_3, num_blocks_4 = 4, 4, 4
         self._out_channels = channels_4
         self._out_strides = [4, 8, 16, 32]
 
@@ -627,6 +633,7 @@ class HRNet(nn.Layer):
 
         self.la1 = Layer1(
             num_channels=64,
+            num_blocks=4,
             has_se=has_se,
             norm_decay=norm_decay,
             freeze_norm=freeze_norm,
@@ -642,6 +649,7 @@ class HRNet(nn.Layer):
         self.st2 = Stage(
             num_channels=channels_2,
             num_modules=num_modules_2,
+            num_blocks=num_blocks_2,
             num_filters=channels_2,
             has_se=self.has_se,
             norm_decay=norm_decay,
@@ -658,6 +666,7 @@ class HRNet(nn.Layer):
         self.st3 = Stage(
             num_channels=channels_3,
             num_modules=num_modules_3,
+            num_blocks=num_blocks_3,
             num_filters=channels_3,
             has_se=self.has_se,
             norm_decay=norm_decay,
@@ -673,6 +682,159 @@ class HRNet(nn.Layer):
         self.st4 = Stage(
             num_channels=channels_4,
             num_modules=num_modules_4,
+            num_blocks=num_blocks_4,
+            num_filters=channels_4,
+            has_se=self.has_se,
+            norm_decay=norm_decay,
+            freeze_norm=freeze_norm,
+            multi_scale_output=len(return_idx) > 1,
+            name="st4")
+
+    def forward(self, inputs):
+        x = inputs['image']
+        conv1 = self.conv_layer1_1(x)
+        conv2 = self.conv_layer1_2(conv1)
+
+        la1 = self.la1(conv2)
+        tr1 = self.tr1([la1])
+        st2 = self.st2(tr1)
+        tr2 = self.tr2(st2)
+
+        st3 = self.st3(tr2)
+        tr3 = self.tr3(st3)
+
+        st4 = self.st4(tr3)
+
+        res = []
+        for i, layer in enumerate(st4):
+            if i == self.freeze_at:
+                layer.stop_gradient = True
+            if i in self.return_idx:
+                res.append(layer)
+
+        return res
+
+    @property
+    def out_shape(self):
+        return [
+            ShapeSpec(
+                channels=self._out_channels[i], stride=self._out_strides[i])
+            for i in self.return_idx
+        ]
+
+
+@register
+class HRNet_smallV2(nn.Layer):
+    """
+    HRNet, see https://arxiv.org/abs/1908.07919
+
+    Args:
+        width (int): the width of HRNet
+        has_se (bool): whether to add SE block for each stage
+        freeze_at (int): the stage to freeze
+        freeze_norm (bool): whether to freeze norm in HRNet
+        norm_decay (float): weight decay for normalization layer weights
+        return_idx (List): the stage to return
+    """
+
+    def __init__(self,
+                 width=18,
+                 has_se=False,
+                 freeze_at=0,
+                 freeze_norm=True,
+                 norm_decay=0.,
+                 return_idx=[0, 1, 2, 3]):
+        super(HRNet_smallV2, self).__init__()
+
+        self.width = width
+        self.has_se = has_se
+        if isinstance(return_idx, Integral):
+            return_idx = [return_idx]
+
+        assert len(return_idx) > 0, "need one or more return index"
+        self.freeze_at = freeze_at
+        self.return_idx = return_idx
+
+        self.channels = {18: [[18, 36], [18, 36, 72], [18, 36, 72, 144]], }
+
+        channels_2, channels_3, channels_4 = self.channels[width]
+        num_modules_2, num_modules_3, num_modules_4 = 1, 3, 2
+        num_blocks_2, num_blocks_3, num_blocks_4 = 2, 2, 2
+        self._out_channels = channels_4
+        self._out_strides = [4, 8, 16, 32]
+
+        self.conv_layer1_1 = ConvNormLayer(
+            ch_in=3,
+            ch_out=64,
+            filter_size=3,
+            stride=2,
+            norm_decay=norm_decay,
+            freeze_norm=freeze_norm,
+            act='relu',
+            name="layer1_1")
+
+        self.conv_layer1_2 = ConvNormLayer(
+            ch_in=64,
+            ch_out=64,
+            filter_size=3,
+            stride=2,
+            norm_decay=norm_decay,
+            freeze_norm=freeze_norm,
+            act='relu',
+            name="layer1_2")
+
+        self.la1 = Layer1(
+            num_channels=64,
+            num_blocks=2,
+            has_se=has_se,
+            norm_decay=norm_decay,
+            freeze_norm=freeze_norm,
+            name="layer2")
+
+        self.tr1 = TransitionLayer(
+            in_channels=[256],
+            out_channels=channels_2,
+            norm_decay=norm_decay,
+            freeze_norm=freeze_norm,
+            name="tr1")
+
+        self.st2 = Stage(
+            num_channels=channels_2,
+            num_modules=num_modules_2,
+            num_blocks=num_blocks_2,
+            num_filters=channels_2,
+            has_se=self.has_se,
+            norm_decay=norm_decay,
+            freeze_norm=freeze_norm,
+            name="st2")
+
+        self.tr2 = TransitionLayer(
+            in_channels=channels_2,
+            out_channels=channels_3,
+            norm_decay=norm_decay,
+            freeze_norm=freeze_norm,
+            name="tr2")
+
+        self.st3 = Stage(
+            num_channels=channels_3,
+            num_modules=num_modules_3,
+            num_blocks=num_blocks_3,
+            num_filters=channels_3,
+            has_se=self.has_se,
+            norm_decay=norm_decay,
+            freeze_norm=freeze_norm,
+            name="st3")
+
+        self.tr3 = TransitionLayer(
+            in_channels=channels_3,
+            out_channels=channels_4,
+            norm_decay=norm_decay,
+            freeze_norm=freeze_norm,
+            name="tr3")
+        self.st4 = Stage(
+            num_channels=channels_4,
+            num_modules=num_modules_4,
+            num_blocks=num_blocks_4,
             num_filters=channels_4,
             has_se=self.has_se,
             norm_decay=norm_decay,
