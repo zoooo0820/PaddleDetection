@@ -737,6 +737,14 @@ class LiteHRNet(nn.Layer):
                 "reduce_ratios": [1, 1, 1],
                 "num_channels": [[40, 80], [40, 80, 160], [40, 80, 160, 320]],
             },
+            "lite_small": {
+                "num_modules": [1, 3, 2],
+                "num_branches": [2, 3, 4],
+                "num_blocks": [2, 2, 2],
+                "module_type": ["LITE", "LITE", "LITE"],
+                "reduce_ratios": [8, 8, 8],
+                "num_channels": [[18, 36], [18, 36, 72], [18, 36, 72, 144]],
+            },
         }
 
         self.stages_config = self.module_configs[network_type]
