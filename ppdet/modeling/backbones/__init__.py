@@ -43,3 +43,5 @@ from .dla import *
 from .shufflenet_v2 import *
 from .swin_transformer import *
 from .lcnet import *
+
+from .hrnet_ccw import *
