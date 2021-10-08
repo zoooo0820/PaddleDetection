@@ -29,7 +29,11 @@ __all__ = ['HrHRNetLoss', 'KeyPointMSELoss']
 @register
 @serializable
 class KeyPointMSELoss(nn.Layer):
-    def __init__(self, use_target_weight=True, loss_scale=0.5):
+    def __init__(self,
+                 use_target_weight=True,
+                 loss_scale=0.5,
+                 add_bone_loss=False,
+                 bones=None):
         """
         KeyPointMSELoss layer
 
@@ -40,6 +44,9 @@ class KeyPointMSELoss(nn.Layer):
         self.criterion = nn.MSELoss(reduction='mean')
         self.use_target_weight = use_target_weight
         self.loss_scale = loss_scale
+        self.add_bone_loss = add_bone_loss
+        if self.add_bone_loss:
+            self.bone_loss = JointBoneLoss(bones)
 
     def forward(self, output, records):
         target = records['target']
@@ -62,7 +69,13 @@ class KeyPointMSELoss(nn.Layer):
                 loss += self.loss_scale * self.criterion(heatmap_pred,
                                                          heatmap_gt)
         keypoint_losses = dict()
-        keypoint_losses['loss'] = loss / num_joints
+        if self.add_bone_loss:
+            bone_loss = 0.01 * self.bone_loss(output, target)
+            keypoint_losses['l2_loss'] = loss / num_joints
+            keypoint_losses['bone_loss'] = bone_loss
+            keypoint_losses['loss'] = loss / num_joints + bone_loss
+        else:
+            keypoint_losses['loss'] = loss / num_joints
         return keypoint_losses
 
 
@@ -226,3 +239,30 @@ def recursive_sum(inputs):
     if isinstance(inputs, abc.Sequence):
         return sum([recursive_sum(x) for x in inputs])
     return inputs
+
+
+class JointBoneLoss(nn.Layer):
+    def __init__(self, bones):
+        super(JointBoneLoss, self).__init__()
+        id_i, id_j = [], []
+        for i, j in bones:
+            id_i.append(i)
+            id_j.append(j)
+        self.id_i = id_i
+        self.id_j = id_j
+
+    def forward(self, joint_out, joint_gt):
+        loss = 0
+        for i, j in zip(self.id_i, self.id_j):
+            J = paddle.norm(
+                joint_out[:, i, :] - joint_out[:, j, :],
+                p=2,
+                axis=-1,
+                keepdim=False)
+            Y = paddle.norm(
+                joint_gt[:, i, :] - joint_gt[:, j, :],
+                p=2,
+                axis=-1,
+                keepdim=False)
+            loss += paddle.abs(J - Y)
+        return loss.mean() / len(self.id_i)
