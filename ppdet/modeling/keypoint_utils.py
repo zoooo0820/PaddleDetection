@@ -300,3 +300,22 @@ def soft_oks_nms(kpts_db, thresh, sigmas=None, in_vis_thre=None):
     keep = keep[:keep_cnt]
 
     return keep
+
+
+def generate_weight_lossmap(heatmaps, kernel_size=3, thresh=0.2):
+    """
+    Args:
+        heatmaps(np.array): group truth heatmap, which shape is (joints_num, height of heatmap,  width of heatmap).
+        kernel_size(int): kernel size for gray dilation.
+        thresh(float): threshold for foreground.
+    Return:
+        weight_lossmap(np.array): weight loss map where weight of foreground is 1 and background is 0, the shape is same as input "heatmaps".
+    """
+    kernel = cv2.getStructuringElement(cv2.MORPH_RECT,
+                                       (kernel_size, kernel_size))
+    dilation = np.zeros_like(heatmaps)
+    joints_num = heatmaps.shape[0]
+    for joint_id in range(joints_num):
+        dilation[joint_id, :] = cv2.dilate(heatmaps[joint_id], kernel)
+    weight_lossmap = np.where(dilation > thresh, 1., 0.)
+    return weight_lossmap

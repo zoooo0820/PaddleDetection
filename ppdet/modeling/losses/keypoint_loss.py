@@ -23,13 +23,17 @@ import paddle.nn as nn
 
 from ppdet.core.workspace import register, serializable
 
-__all__ = ['HrHRNetLoss', 'KeyPointMSELoss']
+__all__ = ['HrHRNetLoss', 'KeyPointMSELoss', 'AdaptiveWingLoss']
 
 
 @register
 @serializable
 class KeyPointMSELoss(nn.Layer):
-    def __init__(self, use_target_weight=True, loss_scale=0.5):
+    def __init__(self,
+                 use_target_weight=True,
+                 loss_scale=0.5,
+                 use_weight_lossmap=False,
+                 fore_weight=10.):
         """
         KeyPointMSELoss layer
 
@@ -37,30 +41,43 @@ class KeyPointMSELoss(nn.Layer):
             use_target_weight (bool): whether to use target weight
         """
         super(KeyPointMSELoss, self).__init__()
-        self.criterion = nn.MSELoss(reduction='mean')
         self.use_target_weight = use_target_weight
         self.loss_scale = loss_scale
+        self.use_weight_lossmap = use_weight_lossmap
+        self.fore_weight = fore_weight
+
+    def criterion(self, pred, target, M=0.):
+        if not self.use_weight_lossmap:
+            return nn.functional.mse_loss(pred, target, 'mean')
+        else:
+            loss = nn.functional.mse_loss(pred, target, 'none') * (
+                self.fore_weight * M + 1)
+            return loss.mean()
 
     def forward(self, output, records):
         target = records['target']
         target_weight = records['target_weight']
         batch_size = output.shape[0]
         num_joints = output.shape[1]
+        M = records.get('weight_lossmap', paddle.zeros_like(target))
         heatmaps_pred = output.reshape(
             (batch_size, num_joints, -1)).split(num_joints, 1)
         heatmaps_gt = target.reshape(
+            (batch_size, num_joints, -1)).split(num_joints, 1)
+        heatmaps_weight = M.reshape(
             (batch_size, num_joints, -1)).split(num_joints, 1)
         loss = 0
         for idx in range(num_joints):
             heatmap_pred = heatmaps_pred[idx].squeeze()
             heatmap_gt = heatmaps_gt[idx].squeeze()
+            heatmap_weight = heatmaps_weight[idx].squeeze()
             if self.use_target_weight:
                 loss += self.loss_scale * self.criterion(
                     heatmap_pred.multiply(target_weight[:, idx]),
-                    heatmap_gt.multiply(target_weight[:, idx]))
+                    heatmap_gt.multiply(target_weight[:, idx]), heatmap_weight)
             else:
-                loss += self.loss_scale * self.criterion(heatmap_pred,
-                                                         heatmap_gt)
+                loss += self.loss_scale * self.criterion(
+                    heatmap_pred, heatmap_gt, heatmap_weight)
         keypoint_losses = dict()
         keypoint_losses['loss'] = loss / num_joints
         return keypoint_losses
@@ -226,3 +243,71 @@ def recursive_sum(inputs):
     if isinstance(inputs, abc.Sequence):
         return sum([recursive_sum(x) for x in inputs])
     return inputs
+
+
+@register
+@serializable
+class AdaptiveWingLoss(nn.Layer):
+    def __init__(self,
+                 w=14,
+                 theta=0.5,
+                 eps=1,
+                 alpha=2.1,
+                 use_target_weight=True,
+                 use_weight_lossmap=False,
+                 fore_weight=10.):
+        super(AdaptiveWingLoss, self).__init__()
+        self.w = w
+        self.theta = theta
+        self.eps = eps
+        self.alpha = alpha
+        self.use_target_weight = use_target_weight
+        self.use_weight_lossmap = use_weight_lossmap
+        self.fore_weight = fore_weight
+
+    def _awing_loss(self, pred, target):
+        thres_param = self.theta / self.eps
+        power_term = self.alpha - target
+        A = self.w / (1 + thres_param**power_term) * power_term * thres_param**(
+            power_term - 1) / self.eps
+        C = self.theta * A - self.w * paddle.log(1 + thres_param**power_term)
+        l1_dist = paddle.abs(pred - target)
+        awing_loss = paddle.where(
+            l1_dist < self.theta, self.w *
+            paddle.log(1 + (l1_dist / self.eps)**power_term), A * l1_dist - C)
+        return awing_loss
+
+    def _weighted_loss(self, pred, target, M=0.):
+        awing_loss = self._awing_loss(pred, target)
+        if not self.use_weight_lossmap:
+            return awing_loss.mean()
+        else:
+            return (awing_loss * (self.fore_weight * M + 1.)).mean()
+
+    def forward(self, output, records):
+        target = records['target']
+        target_weight = records['target_weight']
+        batch_size = output.shape[0]
+        num_joints = output.shape[1]
+        M = records.get('weight_lossmap', paddle.zeros_like(target))
+        heatmaps_pred = output.reshape(
+            (batch_size, num_joints, -1)).split(num_joints, 1)
+        heatmaps_gt = target.reshape(
+            (batch_size, num_joints, -1)).split(num_joints, 1)
+        heatmaps_weight = M.reshape(
+            (batch_size, num_joints, -1)).split(num_joints, 1)
+        loss = 0
+        for idx in range(num_joints):
+            heatmap_pred = heatmaps_pred[idx].squeeze()
+            heatmap_gt = heatmaps_gt[idx].squeeze()
+            heatmap_weight = heatmaps_weight[idx].squeeze()
+            if self.use_target_weight:
+                loss += self._weighted_loss(
+                    heatmap_pred.multiply(target_weight[:, idx]),
+                    heatmap_gt.multiply(target_weight[:, idx]), heatmap_weight)
+            else:
+                loss += self._weighted_loss(heatmap_pred, heatmap_gt,
+                                            heatmap_weight)
+        keypoint_losses = dict()
+        keypoint_losses['loss'] = loss / num_joints
+        return keypoint_losses

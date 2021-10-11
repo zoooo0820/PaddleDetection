@@ -28,7 +28,7 @@ import numpy as np
 import math
 import copy
 
-from ...modeling.keypoint_utils import get_affine_mat_kernel, warp_affine_joints, get_affine_transform, affine_transform
+from ...modeling.keypoint_utils import get_affine_mat_kernel, warp_affine_joints, get_affine_transform, affine_transform, generate_weight_lossmap
 from ppdet.core.workspace import serializable
 from ppdet.utils.logger import setup_logger
 logger = setup_logger(__name__)
@@ -616,10 +616,11 @@ class ToHeatmapsTopDown(object):
 
     """
 
-    def __init__(self, hmsize, sigma):
+    def __init__(self, hmsize, sigma, with_weight_lossmap=False):
         super(ToHeatmapsTopDown, self).__init__()
         self.hmsize = np.array(hmsize)
         self.sigma = sigma
+        self.with_weight_lossmap = with_weight_lossmap
 
     def __call__(self, records):
         joints = records['joints']
@@ -663,6 +664,8 @@ class ToHeatmapsTopDown(object):
             if v > 0.5:
                 target[joint_id][img_y[0]:img_y[1], img_x[0]:img_x[1]] = g[g_y[
                     0]:g_y[1], g_x[0]:g_x[1]]
+        if self.with_weight_lossmap:
+            records['weight_lossmap'] = generate_weight_lossmap(target)
         records['target'] = target
         records['target_weight'] = target_weight
         del records['joints'], records['joints_vis']
