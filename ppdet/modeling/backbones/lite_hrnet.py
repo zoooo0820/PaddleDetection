@@ -652,7 +652,7 @@ class LiteHRNetModule(nn.Layer):
                 y = out[0] if i == 0 else self.fuse_layers[i][0](out[0])
                 for j in range(self.num_branches):
                     if j == 0:
-                        y += y
+                        y *= 2
                     elif i == j:
                         y += out[j]
                     else:
