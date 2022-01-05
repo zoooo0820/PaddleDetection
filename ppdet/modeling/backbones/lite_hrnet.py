@@ -98,6 +98,8 @@ class ConvNormLayer(nn.Layer):
             out = F.relu(out)
         elif self.act == 'sigmoid':
             out = F.sigmoid(out)
+        elif self.act == 'hardswish':
+            out = F.hardswish(out)
         return out
 
 
@@ -146,7 +148,8 @@ class CrossResolutionWeightingModule(nn.Layer):
                  ratio=16,
                  norm_type='bn',
                  freeze_norm=False,
-                 norm_decay=0.):
+                 norm_decay=0.,
+                 act='relu'):
         super(CrossResolutionWeightingModule, self).__init__()
         self.channels = channels
         total_channel = sum(channels)
@@ -156,7 +159,7 @@ class CrossResolutionWeightingModule(nn.Layer):
             filter_size=1,
             stride=1,
             norm_type=norm_type,
-            act='relu',
+            act=act,
             freeze_norm=freeze_norm,
             norm_decay=norm_decay)
         self.conv2 = ConvNormLayer(
@@ -184,7 +187,12 @@ class CrossResolutionWeightingModule(nn.Layer):
 
 
 class SpatialWeightingModule(nn.Layer):
-    def __init__(self, in_channel, ratio=16, freeze_norm=False, norm_decay=0.):
+    def __init__(self,
+                 in_channel,
+                 ratio=16,
+                 freeze_norm=False,
+                 norm_decay=0.,
+                 act='relu'):
         super(SpatialWeightingModule, self).__init__()
         self.global_avgpooling = nn.AdaptiveAvgPool2D(1)
         self.conv1 = ConvNormLayer(
@@ -192,7 +200,7 @@ class SpatialWeightingModule(nn.Layer):
             ch_out=in_channel // ratio,
             filter_size=1,
             stride=1,
-            act='relu',
+            act=act,
             freeze_norm=freeze_norm,
             norm_decay=norm_decay)
         self.conv2 = ConvNormLayer(
@@ -218,7 +226,8 @@ class ConditionalChannelWeightingBlock(nn.Layer):
                  reduce_ratio,
                  norm_type='bn',
                  freeze_norm=False,
-                 norm_decay=0.):
+                 norm_decay=0.,
+                 act='relu'):
         super(ConditionalChannelWeightingBlock, self).__init__()
         assert stride in [1, 2]
         branch_channels = [channel // 2 for channel in in_channels]
@@ -228,7 +237,8 @@ class ConditionalChannelWeightingBlock(nn.Layer):
             ratio=reduce_ratio,
             norm_type=norm_type,
             freeze_norm=freeze_norm,
-            norm_decay=norm_decay)
+            norm_decay=norm_decay,
+            act=act)
         self.depthwise_convs = nn.LayerList([
             ConvNormLayer(
                 channel,
@@ -246,7 +256,8 @@ class ConditionalChannelWeightingBlock(nn.Layer):
                 channel,
                 ratio=4,
                 freeze_norm=freeze_norm,
-                norm_decay=norm_decay) for channel in branch_channels
+                norm_decay=norm_decay,
+                act=act) for channel in branch_channels
         ])
 
     def forward(self, x):
@@ -270,7 +281,8 @@ class ShuffleUnit(nn.Layer):
                  stride,
                  norm_type='bn',
                  freeze_norm=False,
-                 norm_decay=0.):
+                 norm_decay=0.,
+                 act='relu'):
         super(ShuffleUnit, self).__init__()
         branch_channel = out_channel // 2
         self.stride = stride
@@ -294,7 +306,7 @@ class ShuffleUnit(nn.Layer):
                     filter_size=1,
                     stride=1,
                     norm_type=norm_type,
-                    act='relu',
+                    act=act,
                     freeze_norm=freeze_norm,
                     norm_decay=norm_decay), )
         self.branch2 = nn.Sequential(
@@ -304,7 +316,7 @@ class ShuffleUnit(nn.Layer):
                 filter_size=1,
                 stride=1,
                 norm_type=norm_type,
-                act='relu',
+                act=act,
                 freeze_norm=freeze_norm,
                 norm_decay=norm_decay),
             ConvNormLayer(
@@ -322,7 +334,7 @@ class ShuffleUnit(nn.Layer):
                 filter_size=1,
                 stride=1,
                 norm_type=norm_type,
-                act='relu',
+                act=act,
                 freeze_norm=freeze_norm,
                 norm_decay=norm_decay), )
 
@@ -343,7 +355,8 @@ class IterativeHead(nn.Layer):
                  in_channels,
                  norm_type='bn',
                  freeze_norm=False,
-                 norm_decay=0.):
+                 norm_decay=0.,
+                 act='relu'):
         super(IterativeHead, self).__init__()
         num_branches = len(in_channels)
         self.in_channels = in_channels[::-1]
@@ -358,7 +371,7 @@ class IterativeHead(nn.Layer):
                         filter_size=3,
                         stride=1,
                         dw_act=None,
-                        pw_act='relu',
+                        pw_act=act,
                         dw_norm_type=norm_type,
                         pw_norm_type=norm_type,
                         freeze_norm=freeze_norm,
@@ -371,7 +384,7 @@ class IterativeHead(nn.Layer):
                         filter_size=3,
                         stride=1,
                         dw_act=None,
-                        pw_act='relu',
+                        pw_act=act,
                         dw_norm_type=norm_type,
                         pw_norm_type=norm_type,
                         freeze_norm=freeze_norm,
@@ -494,7 +507,8 @@ class LiteHRNetModule(nn.Layer):
                  with_fuse=True,
                  norm_type='bn',
                  freeze_norm=False,
-                 norm_decay=0.):
+                 norm_decay=0.,
+                 act='relu'):
         super(LiteHRNetModule, self).__init__()
         assert num_branches == len(in_channels),\
             "num_branches {} should equal to num_in_channels {}".format(num_branches, len(in_channels))
@@ -513,13 +527,15 @@ class LiteHRNetModule(nn.Layer):
                 num_blocks,
                 reduce_ratio,
                 freeze_norm=freeze_norm,
-                norm_decay=norm_decay)
+                norm_decay=norm_decay,
+                act=act)
         elif self.module_type == 'NAIVE':
             self.layers = self._make_naive_branches(
                 num_branches,
                 num_blocks,
                 freeze_norm=freeze_norm,
-                norm_decay=norm_decay)
+                norm_decay=norm_decay,
+                act=act)
 
         if self.with_fuse:
             self.fuse_layers = self._make_fuse_layers(
@@ -531,7 +547,8 @@ class LiteHRNetModule(nn.Layer):
                                reduce_ratio,
                                stride=1,
                                freeze_norm=False,
-                               norm_decay=0.):
+                               norm_decay=0.,
+                               act='relu'):
         layers = []
         for i in range(num_blocks):
             layers.append(
@@ -541,14 +558,16 @@ class LiteHRNetModule(nn.Layer):
                     reduce_ratio=reduce_ratio,
                     norm_type=self.norm_type,
                     freeze_norm=freeze_norm,
-                    norm_decay=norm_decay))
+                    norm_decay=norm_decay,
+                    act=act))
         return nn.Sequential(*layers)
 
     def _make_naive_branches(self,
                              num_branches,
                              num_blocks,
                              freeze_norm=False,
-                             norm_decay=0.):
+                             norm_decay=0.,
+                             act='relu'):
         branches = []
         for branch_idx in range(num_branches):
             layers = []
@@ -560,7 +579,8 @@ class LiteHRNetModule(nn.Layer):
                         stride=1,
                         norm_type=self.norm_type,
                         freeze_norm=freeze_norm,
-                        norm_decay=norm_decay))
+                        norm_decay=norm_decay,
+                        act=act))
             branches.append(nn.Sequential(*layers))
         return nn.LayerList(branches)
 
@@ -691,7 +711,8 @@ class LiteHRNet(nn.Layer):
                  freeze_at=0,
                  freeze_norm=True,
                  norm_decay=0.,
-                 return_idx=[0, 1, 2, 3]):
+                 return_idx=[0, 1, 2, 3],
+                 act='relu'):
         super(LiteHRNet, self).__init__()
         if isinstance(return_idx, Integral):
             return_idx = [return_idx]
@@ -750,11 +771,20 @@ class LiteHRNet(nn.Layer):
                                                 num_channels, self.freeze_norm,
                                                 self.norm_decay))
             stage, num_channels_pre_layer = self._make_stage(
-                self.stages_config, stage_idx, num_channels, True,
-                self.freeze_norm, self.norm_decay)
+                self.stages_config,
+                stage_idx,
+                num_channels,
+                True,
+                self.freeze_norm,
+                self.norm_decay,
+                act=act)
             setattr(self, 'stage{}'.format(stage_idx), stage)
-        self.head_layer = IterativeHead(num_channels_pre_layer, 'bn',
-                                        self.freeze_norm, self.norm_decay)
+        self.head_layer = IterativeHead(
+            num_channels_pre_layer,
+            'bn',
+            self.freeze_norm,
+            self.norm_decay,
+            act=act)
 
     def _make_transition_layer(self,
                                num_channels_pre_layer,
@@ -825,7 +855,8 @@ class LiteHRNet(nn.Layer):
                     in_channels,
                     multiscale_output,
                     freeze_norm=False,
-                    norm_decay=0.):
+                    norm_decay=0.,
+                    act='relu'):
         num_modules = stages_config["num_modules"][stage_idx]
         num_branches = stages_config["num_branches"][stage_idx]
         num_blocks = stages_config["num_blocks"][stage_idx]
@@ -848,7 +879,8 @@ class LiteHRNet(nn.Layer):
                     multiscale_output=reset_multiscale_output,
                     with_fuse=True,
                     freeze_norm=freeze_norm,
-                    norm_decay=norm_decay))
+                    norm_decay=norm_decay,
+                    act=act))
             in_channels = modules[-1].in_channels
         return nn.Sequential(*modules), in_channels
 
