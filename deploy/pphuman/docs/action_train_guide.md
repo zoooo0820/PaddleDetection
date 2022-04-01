@@ -33,15 +33,21 @@ STGCN是一个基于骨骼点坐标序列进行预测的模型。在PaddleVideo�
 
 注意：在这一步完成后，请严格确认处理后的数据仍然包含了一个完整的行为动作，不会产生预测上的歧义，建议通过可视化数据的方式进行确认。
 
-#### 3. 转化为PaddleVideo可用的格式
-在经过前两步处理后，我们得到了每个人物动作片段的标注，下面进一步将其转化为PaddleVideo可用的格式。
+#### 3. 保存为PaddleVideo可用的文件格式
+在经过前两步处理后，我们得到了每个人物动作片段的标注，此时我们已有一个列表`all_kpts`，这个列表中包含多个关键点序列片段，其中每一个片段形状为(T, V, C) （在我们的例子中即(50, 17, 2)), 下面进一步将其转化为PaddleVideo可用的格式。
 - 调整维度顺序： 可通过`np.transpose`和`np.expand_dims`将每一个片段的维度转化为(C, T, V, M)的格式。
-- 将所有片段组合为一个文件， 可参考下列代码片段。
+- 将所有片段组合并保存为一个文件
+
+- 可参考下列代码片段。
 
 ```python
 all_annos = []
 for kpt_anno in all_kpts:
-    # every kpt_anno shape is (C, T, V, M)
+    # kpt_anno's shape is (T, V, C)
+    kpt_anno = np.transpose(kpt_anno, (2,0,1))
+    # now kpt_anno's shape is (C, T, V)
+    kpt_anno = np.expand_dims(kpt_anno, -1)
+    # kpt_anno's shape is (C, T, V, M) and here M=1
     all_annos.append(kpt_anno)
 all_annos = np.array(all_annos)
 data = np.stack(all_annos, 0)
@@ -70,7 +76,21 @@ pickle.dump(Label, open("label.pkl", "wb"))
 至此，我们得到了可用的训练数据（`.npy`）和对应的标注文件（`.pkl`）。
 
 ### 修改PaddleVideo以实现自定义数据训练
-#### 1. 修改配置文件
+#### 1. 配置PaddleVideo环境
+依照下列步骤，配置PaddleVideo套件的训练环境，更详细的步骤请见[安装说明](https://github.com/PaddlePaddle/PaddleVideo/blob/develop/docs/zh-CN/install.md)
+```bash
+   # Clone PaddleVideo套件代码
+   git clone https://github.com/PaddlePaddle/PaddleVideo.git
+
+   # 安装依赖
+   cd PaddleVideo
+   pip install -r requirements.txt
+
+   # 安装paddlevideo
+   python setup.py install
+```
+
+#### 2. 修改配置文件
 在这一步中，我们对PaddleVideo的[STGCN-NTU配置文件](https://github.com/PaddlePaddle/PaddleVideo/blob/develop/configs/recognition/stgcn/stgcn_ntucs.yaml)进行修改。
 
 - 在`Model`部分，做以下修改：
@@ -89,7 +109,7 @@ MODEL:
 
 - 在`DATASET`部分，分别将`train`/`valid`/`test`部分的`file_path`, `label_path`修改为我们前面整理的数据文件路径。
 
-#### 2. 修改网络代码
+#### 3. 修改网络代码
 在这一步中，由于我们定义的骨骼点结构、数量等与原始的`NTU-RGB+D`有很大不同，因此需要对网络做一些修改。
 
 - 对文件[paddlevideo/modeling/backbones/stgcn.py](https://github.com/PaddlePaddle/PaddleVideo/blob/develop/paddlevideo/modeling/backbones/stgcn.py)中的`Graph`类做出如下修改：
