@@ -276,7 +276,11 @@ void PredictImage(const std::vector<std::string> all_img_paths,
     }
 
     // Store all detected result
-    std::vector<PaddleDetection::ObjectResult> result;
+    if (det->config_.arch_ == "SOLOv2"){
+        std::vector<PaddleDetection::SOLOv2Result> result;
+
+        std::vector<PaddleDetection::ObjectResult> result;
+    
     std::vector<int> bbox_num;
     std::vector<double> det_times;
     bool is_rbox = false;
@@ -349,6 +353,83 @@ void PredictImage(const std::vector<std::string> all_img_paths,
     det_t[1] += det_times[1];
     det_t[2] += det_times[2];
     det_times.clear();
+
+    }else{
+    std::vector<PaddleDetection::ObjectResult> result;
+    
+    std::vector<int> bbox_num;
+    std::vector<double> det_times;
+    bool is_rbox = false;
+    if (run_benchmark) {
+      det->Predict(
+          batch_imgs, threshold, 10, 10, &result, &bbox_num, &det_times);
+    } else {
+      det->Predict(batch_imgs, threshold, 0, 1, &result, &bbox_num, &det_times);
+      // get labels and colormap
+      auto labels = det->GetLabelList();
+      auto colormap = PaddleDetection::GenerateColorMap(labels.size());
+
+      int item_start_idx = 0;
+      for (int i = 0; i < left_image_cnt; i++) {
+        cv::Mat im = batch_imgs[i];
+        std::vector<PaddleDetection::ObjectResult> im_result;
+        int detect_num = 0;
+
+        for (int j = 0; j < bbox_num[i]; j++) {
+          PaddleDetection::ObjectResult item = result[item_start_idx + j];
+          if (item.confidence < threshold || item.class_id == -1) {
+            continue;
+          }
+          detect_num += 1;
+          im_result.push_back(item);
+          if (item.rect.size() > 6) {
+            is_rbox = true;
+            printf("class=%d confidence=%.4f rect=[%d %d %d %d %d %d %d %d]\n",
+                   item.class_id,
+                   item.confidence,
+                   item.rect[0],
+                   item.rect[1],
+                   item.rect[2],
+                   item.rect[3],
+                   item.rect[4],
+                   item.rect[5],
+                   item.rect[6],
+                   item.rect[7]);
+          } else {
+            printf("class=%d confidence=%.4f rect=[%d %d %d %d]\n",
+                   item.class_id,
+                   item.confidence,
+                   item.rect[0],
+                   item.rect[1],
+                   item.rect[2],
+                   item.rect[3]);
+          }
+        }
+        std::cout << all_img_paths.at(idx * batch_size + i)
+                  << " The number of detected box: " << detect_num << std::endl;
+        item_start_idx = item_start_idx + bbox_num[i];
+        // Visualization result
+        cv::Mat vis_img = PaddleDetection::VisualizeResult(
+            im, im_result, labels, colormap, is_rbox);
+        std::vector<int> compression_params;
+        compression_params.push_back(CV_IMWRITE_JPEG_QUALITY);
+        compression_params.push_back(95);
+        std::string output_path(output_dir);
+        if (output_dir.rfind(OS_PATH_SEP) != output_dir.size() - 1) {
+          output_path += OS_PATH_SEP;
+        }
+        std::string image_file_path = all_img_paths.at(idx * batch_size + i);
+        output_path +=
+            image_file_path.substr(image_file_path.find_last_of('/') + 1);
+        cv::imwrite(output_path, vis_img, compression_params);
+        printf("Visualized output saved as %s\n", output_path.c_str());
+      }
+    }
+    det_t[0] += det_times[0];
+    det_t[1] += det_times[1];
+    det_t[2] += det_times[2];
+    det_times.clear();
+    }
   }
   PrintBenchmarkLog(det_t, all_img_paths.size());
 }

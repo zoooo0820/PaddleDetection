@@ -29,6 +29,7 @@
 
 #include "include/config_parser.h"
 #include "include/picodet_postprocess.h"
+#include "include/solov2_postprocess.h"
 #include "include/preprocess_op.h"
 #include "include/utils.h"
 
@@ -46,6 +47,13 @@ cv::Mat VisualizeResult(
     const std::vector<std::string>& lables,
     const std::vector<int>& colormap,
     const bool is_rbox);
+
+// Visualiztion SOLOv2 Result
+cv::Mat VisualizeResult(
+    const cv::Mat& img,
+    const std::vector<PaddleDetection::SOLOv2Result>& results,
+    const std::vector<std::string>& lables,
+    const std::vector<int>& colormap);
 
 class ObjectDetector {
  public:
@@ -76,6 +84,7 @@ class ObjectDetector {
     preprocessor_.Init(config_.preprocess_info_);
     LoadModel(model_dir, batch_size, run_mode);
   }
+  ConfigPaser config_;
 
   // Load Paddle inference model
   void LoadModel(const std::string& model_dir,
@@ -88,6 +97,15 @@ class ObjectDetector {
                const int warmup = 0,
                const int repeats = 1,
                std::vector<PaddleDetection::ObjectResult>* result = nullptr,
+               std::vector<int>* bbox_num = nullptr,
+               std::vector<double>* times = nullptr);
+
+  // Run predictor for SOLOv2
+  void Predict(const std::vector<cv::Mat> imgs,
+               const double threshold = 0.5,
+               const int warmup = 0,
+               const int repeats = 1,
+               std::vector<PaddleDetection::SOLOv2Result>* result = nullptr,
                std::vector<int>* bbox_num = nullptr,
                std::vector<double>* times = nullptr);
 
@@ -121,7 +139,6 @@ class ObjectDetector {
   Preprocessor preprocessor_;
   ImageBlob inputs_;
   float threshold_;
-  ConfigPaser config_;
 };
 
 }  // namespace PaddleDetection

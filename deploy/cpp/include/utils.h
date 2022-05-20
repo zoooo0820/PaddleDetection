@@ -36,6 +36,14 @@ struct ObjectResult {
   std::vector<int> mask;
 };
 
+// SOLOv2 Instance Segmentation  Result
+struct SOLOv2Result {
+  std::vector<int> boxes_num;
+  std::vector<float> score;
+  std::vector<uint8_t> seg;
+  std::vector<int64_t> label;
+};
+
 void nms(std::vector<ObjectResult> &input_boxes, float nms_threshold);
 
 }  // namespace PaddleDetection
